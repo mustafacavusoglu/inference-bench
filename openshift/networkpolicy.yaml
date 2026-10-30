@@ -2,11 +2,11 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: llm-bench-only-proxy
+  name: inference-bench-only-proxy
 spec:
   podSelector:
     matchLabels:
-      app: llm-bench
+      app: inference-bench
   policyTypes: [Ingress]
   ingress:
     - ports:

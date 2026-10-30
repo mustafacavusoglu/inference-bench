@@ -1,24 +1,20 @@
 apiVersion: image.openshift.io/v1
 kind: ImageStream
 metadata:
-  name: llm-bench
+  name: inference-bench
 ---
 apiVersion: build.openshift.io/v1
 kind: BuildConfig
 metadata:
-  name: llm-bench
+  name: inference-bench
 spec:
   source:
     type: Binary
   strategy:
     type: Docker
     dockerStrategy:
-      # air-gapped build: uncomment to skip the ShareGPT download
-      # buildArgs:
-      #   - name: SKIP_SHAREGPT
-      #     value: "1"
       dockerfilePath: Dockerfile
   output:
     to:
       kind: ImageStreamTag
-      name: llm-bench:latest
+      name: inference-bench:latest

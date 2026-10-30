@@ -1,7 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# Namespace is created by hand: oc new-project llm-bench
-namespace: llm-bench
+# Namespace is created by hand: oc new-project inference-bench
+namespace: inference-bench
 resources:
   - serviceaccount.yaml
   - rbac.yaml

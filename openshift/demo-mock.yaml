@@ -1,0 +1,36 @@
+# Optional: fake vLLM server (same image, `ibench mock`) to try Inference Bench without a GPU.
+# In the UI: Service · name ibench-mock · namespace inference-bench · port 8000 · http
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ibench-mock
+  annotations:
+    image.openshift.io/triggers: '[{"from":{"kind":"ImageStreamTag","name":"inference-bench:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"mock\")].image"}]'
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: ibench-mock}
+  template:
+    metadata:
+      labels: {app: ibench-mock}
+    spec:
+      containers:
+        - name: mock
+          image: image-registry.openshift-image-registry.svc:5000/inference-bench/inference-bench:latest
+          args: [mock, -addr, ":8000", -model, demo-model]
+          ports:
+            - containerPort: 8000
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: "2", memory: 256Mi}
+          readinessProbe:
+            httpGet: {path: /v1/models, port: 8000}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ibench-mock
+spec:
+  selector: {app: ibench-mock}
+  ports:
+    - {name: http, port: 8000, targetPort: 8000}

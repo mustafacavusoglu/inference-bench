@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="tr" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Inference Bench</title>
+<style>
+:root{--bg:#fcfcfb;--card:#ffffff;--text:#0b0b0b;--text-2:#52514e;--muted:#8a8984;--line:#e6e5e0;--grid:#ecebe6;--good:#008300;--bad:#c62828}
+:root[data-theme=dark]{--bg:#121211;--card:#1a1a19;--text:#f0efec;--text-2:#c3c2b7;--muted:#8f8e86;--line:#2e2e2b;--grid:#2a2a27;--good:#4caf50;--bad:#ef6b6b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1240px;margin:0 auto;padding:24px 16px 64px}
+header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:20px}
+h1{font-size:22px;margin:0;word-break:break-word}h2{font-size:16px;margin:32px 0 12px}.sub{color:var(--text-2);margin-top:4px;word-break:break-word}
+button{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer;font:inherit;white-space:nowrap}
+.kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.kpi .l{color:var(--text-2);font-size:12px}.kpi .v{font-size:26px;font-weight:600;margin:2px 0}.kpi .u{color:var(--muted);font-size:12px}
+.kpi.good .v{color:var(--good)}.kpi.bad .v{color:var(--bad)}
+.insights{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 20px;margin-bottom:12px}.insights ul{margin:0;padding-left:18px}.insights li{margin:6px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 8px 0;min-width:0}
+.card h3{font-size:14px;font-weight:600;margin:4px 6px 0}
+.wide{grid-column:1/-1}
+.tbl{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{padding:7px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--text-2);font-weight:500}
+td:first-child,th:first-child{text-align:left}td.bad{color:var(--bad);font-weight:600}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 18px;margin:0}
+dt{color:var(--text-2)}dd{margin:0;word-break:break-word}.warn{color:var(--bad)}
+code{background:var(--grid);padding:1px 5px;border-radius:4px;word-break:break-word}
+footer{margin-top:40px;color:var(--muted);font-size:12px}
+@media(max-width:860px){.grid{grid-template-columns:1fr}header{flex-direction:column}dl{grid-template-columns:1fr}}
+</style>
+<script>/*PLOTLY*/</script>
+</head>
+<body>
+<main>
+<header><div><h1 id="ttl"></h1><div class="sub" id="sub"></div></div><button id="tt" type="button">☾ Koyu</button></header>
+<div id="body"></div>
+<footer id="foot"></footer>
+</main>
+<script id="runs" type="application/json">/*RUNS*/</script>
+<script>
+"use strict";
+// validated categorical order (dataviz reference palette); entity keeps its slot
+const C = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
+const SLO_COLOR = "#e34948";
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const f = (v, d = 0, u = "") => v == null || isNaN(v) ? "–" : Number(v).toLocaleString("en-US", {minimumFractionDigits: d, maximumFractionDigits: d}) + u;
+const G = v => String(parseFloat(Number(v).toPrecision(6)));            // python's :g
+const g = (s, ...path) => { for (const p of path) s = (s || {})[p]; return s; };
+const num = v => typeof v === "number" ? v : null;
+const unit = run => run.config.load.mode === "concurrency" ? "eşzamanlı istek" : "istek/s";
+const lvl = (run, l) => run.config.load.mode === "concurrency" ? `c=${G(l)}` : `${G(l)} istek/s`;
+const stages = run => (run.stages || []).filter(s => s.ttft);
+const tok = s => s.steady_out_tok_per_s != null ? s.steady_out_tok_per_s : s.out_tok_per_s;   // steady when present
+const maxBy = (a, fn) => a.reduce((b, x) => fn(x) > fn(b) ? x : b, a[0]);
+
+function recommend(run) {                      // port of bench.recommend
+  const slo = run.config.slo;
+  let best = null;
+  for (const s of run.stages || []) {
+    if (!s.ttft || s.errors > 0.01 * s.requests) continue;
+    if (s.ttft.p95 <= slo.ttft_ms && (!s.tpot || s.tpot.p95 <= slo.tpot_ms)) best = s;
+  }
+  return best;
+}
+
+// ---------------------------------------------------------------- insights
+
+function insights(run) {
+  const st = stages(run), slo = run.config.slo, rec = recommend(run);
+  if (!st.length) return ["Tamamlanmış ölçüm yok."];
+  const out = [], u = unit(run);
+  if (rec) {
+    out.push(`<b>${esc(run.name)}</b>, p95 TTFT ≤ ${G(slo.ttft_ms)} ms ve p95 TPOT ≤ ${G(slo.tpot_ms)} ms hedefinde ` +
+      `en fazla <b>${G(rec.level)} ${u}</b> karşılıyor; bu noktada <b>${f(rec.out_tok_per_s)} tok/s</b> ` +
+      `(${f(rec.req_per_s, 2)} istek/s) üretiyor.`);
+  } else {
+    out.push(`<b>En düşük yük seviyesinde bile SLO karşılanmadı</b> (p95 TTFT ${f(st[0].ttft.p95)} ms, ` +
+      `p95 TPOT ${f(g(st[0], "tpot", "p95"))} ms). Daha düşük yük, daha kısa girdi veya daha güçlü donanım gerekli.`);
+  }
+  const after = rec ? st.filter(s => s.level > rec.level) : st.slice(0, 1);
+  if (after.length) {
+    const b = after[0], why = [], cause = [], sv = b.server || {}, tp = g(b, "tpot", "p95");
+    if (b.ttft.p95 > slo.ttft_ms) why.push(`TTFT p95 ${f(b.ttft.p95)} ms`);
+    if (tp && tp > slo.tpot_ms) why.push(`TPOT p95 ${f(tp)} ms`);
+    if (b.errors > 0.01 * b.requests) why.push(`hata oranı %${(b.errors / b.requests * 100).toFixed(1)}`);
+    if ((sv.kv_cache_max_pct || 0) >= 90) cause.push(`KV cache %${sv.kv_cache_max_pct.toFixed(0)} doldu`);
+    if (sv.preemptions) cause.push(`${sv.preemptions.toFixed(0)} preemption (KV cache yetersiz)`);
+    if ((sv.waiting_max || 0) > 0 && sv.queue_ms) cause.push(`istekler sunucu kuyruğunda ortalama ${f(sv.queue_ms)} ms bekledi`);
+    if (tp && tp > slo.tpot_ms && !cause.length) cause.push("batch büyüdükçe token üretimi (decode) yavaşladı");
+    if (why.length) out.push(`Kırılma noktası <b>${lvl(run, b.level)}</b>: ${why.join(", ")}` + (cause.length ? ` — sebep: ${cause.join("; ")}.` : "."));
+  }
+  for (let i = 1; i < st.length; i++) {
+    const prev = st[i - 1], s = st[i];
+    if (prev.out_tok_per_s && s.out_tok_per_s < prev.out_tok_per_s * 1.1) {
+      out.push(`Throughput ${lvl(run, prev.level)} sonrasında doyuma ulaşıyor ` +
+        `(${f(prev.out_tok_per_s)} → ${f(s.out_tok_per_s)} tok/s); daha fazla yük yalnızca gecikmeyi artırır.`);
+      break;
+    }
+  }
+  const ref = rec || st[0], total = ref.ttft.mean + ref.decode.mean;
+  out.push(`${lvl(run, ref.level)} seviyesinde bir isteğin süresinin %${(ref.ttft.mean / total * 100).toFixed(0)}'i ilk token'a kadar ` +
+    `(kuyruk + prefill), %${(ref.decode.mean / total * 100).toFixed(0)}'i token üretimine (decode) gidiyor. ` +
+    `Ortalama giriş ${f(ref.in_tokens_mean)} / çıkış ${f(ref.out_tokens_mean)} token.`);
+  if (st[0].user_tok_per_s)
+    out.push(`Tek kullanıcı, yanıtı saniyede ~${f(st[0].user_tok_per_s)} token hızında görür (insan okuma hızı ~5–10 token/s).`);
+  const cq = Math.max(0, ...st.map(s => g(s, "client_queue", "p95") || 0));
+  if (cq > 10)
+    out.push(`İstemci eşzamanlılık sınırı (max_concurrency) nedeniyle istekler gönderilmeden önce p95 ${f(cq)} ms bekledi; ` +
+      `gerçek kullanıcı gecikmesi raporlanandan yüksek olabilir — max_concurrency'yi artırın.`);
+  const errs = (run.stages || []).reduce((a, s) => a + s.errors, 0);
+  if (errs) {
+    let top = null;
+    for (const s of run.stages) { top = (s.error_samples || [])[0]; if (top) break; }
+    out.push(`Toplam ${errs} hatalı istek. En sık: <code>${top ? esc(top.error) : ""}</code>`);
+  }
+  return out;
+}
+
+function kpis(run) {
+  const st = stages(run), rec = recommend(run);
+  if (!st.length) return [];
+  const peak = maxBy(st, tok), total = run.stages.reduce((a, s) => a + s.requests, 0), errs = run.stages.reduce((a, s) => a + s.errors, 0);
+  const tiles = [
+    ["SLO içi kapasite", rec ? G(rec.level) : "Yok", rec ? unit(run) : "SLO karşılanmadı", rec ? "good" : "bad"],
+    ["SLO noktasında throughput", rec ? f(rec.out_tok_per_s) : "–", rec ? `tok/s · ${f(rec.req_per_s, 2)} istek/s` : "", ""],
+    ["Tepe throughput", f(tok(peak)), `tok/s @ ${lvl(run, peak.level)}`, ""],
+  ];
+  const gpus = (run.resolved || {}).gpus;
+  if (gpus > 0) tiles.push(["GPU başına throughput", f(tok(peak) / gpus), "tok/s/GPU", ""]);
+  tiles.push(
+    ["İlk token (tek kullanıcı)", f(st[0].ttft.p50), `ms TTFT p50 @ ${lvl(run, st[0].level)}`, ""],
+    ["Kullanıcı başına hız", f(st[0].user_tok_per_s), "tok/s (1000 / TPOT p50)", ""],
+    ["Hata oranı", total ? `%${(errs / total * 100).toFixed(1)}` : "–", `${errs} / ${total} istek`, errs > 0.01 * total ? "bad" : "good"]);
+  const gs = st.filter(s => s.gpu);
+  if (gs.length) {
+    const gp = maxBy(gs, s => s.gpu.util_max);
+    tiles.push(["GPU kullanımı (tepe)", f(gp.gpu.util_max, 0, "%"), `bellek ${f(gp.gpu.mem_used_gb_max, 1)} GB`, ""]);
+    const pk = peak.gpu || {};
+    if (pk.power_w_mean) tiles.push(["Enerji verimliliği", f(tok(peak) / pk.power_w_mean, 2), `tok/J @ ${f(pk.power_w_mean)} W`, ""]);
+  }
+  return tiles;
+}
+
+// ---------------------------------------------------------------- charts
+
+const PCFG = {displaylogo: false, responsive: true};
+const levelsOf = runs => [...new Set(runs.flatMap(r => stages(r).map(s => s.level)))].sort((a, b) => a - b);
+const queue = [];                        // [div, traces, layout]; plotted after insertion into the DOM
+
+function chart(title, traces, layout = {}, {height = 320, xlog = null} = {}) {
+  const lay = Object.assign({
+    height, margin: {l: 56, r: 16, t: 36, b: 40}, template: {}, paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+    font: {family: "system-ui, -apple-system, Segoe UI, sans-serif", size: 12},
+    legend: {orientation: "h", y: 1.0, yanchor: "bottom", x: 1, xanchor: "right", bgcolor: "rgba(0,0,0,0)"},
+    hovermode: "x unified", xaxis: {showgrid: true, zeroline: false}, yaxis: {showgrid: true, zeroline: false, rangemode: "tozero"}
+  }, layout);
+  lay.xaxis = Object.assign({showgrid: true, zeroline: false}, layout.xaxis);
+  lay.yaxis = Object.assign({showgrid: true, zeroline: false, rangemode: "tozero"}, layout.yaxis);
+  if (xlog) Object.assign(lay.xaxis, {type: "log", tickvals: xlog, ticktext: xlog.map(G)});
+  const id = "ch" + queue.length;
+  queue.push([id, traces, lay]);
+  return `<div class="card"><h3>${esc(title)}</h3><div id="${id}"></div></div>`;
+}
+
+const line = (x, y, name, color, dash) => ({type: "scatter", mode: "lines+markers", x, y, name, connectgaps: false,
+  line: {color, width: 2, dash: dash || "solid"}, marker: {size: 8}});
+const plain = (x, y, name, color, extra) => { const t = {...line(x, y, name, color), mode: "lines", ...extra}; delete t.marker; return t; };
+
+// SLO horizontal line (+ label) in data coords of y
+const sloLine = (y, label) => ({
+  shapes: [{type: "line", xref: "paper", x0: 0, x1: 1, yref: "y", y0: y, y1: y, line: {color: SLO_COLOR, width: 1.5, dash: "dash"}}],
+  annotations: [{xref: "paper", x: 0, xanchor: "left", yref: "y", y, yanchor: "bottom", text: `SLO ${label}`, showarrow: false, font: {color: SLO_COLOR}}]
+});
+const withSlo = (lay, y, label) => { const s = sloLine(y, label); return {...lay, shapes: s.shapes, annotations: s.annotations}; };
+
+function singleCharts(run) {
+  const st = stages(run), slo = run.config.slo, rec = recommend(run), x = st.map(s => s.level), xl = levelsOf([run]);
+  const xt = `Yük (${unit(run)})`, out = [];
+  const hasSteady = st.some(s => s.steady_out_tok_per_s != null), hasTtfo = st.some(s => s.ttfo);
+
+  let tr, lay = {xaxis: {title: {text: xt}}, yaxis: {title: {text: "token / s"}}, showlegend: hasSteady};
+  if (hasSteady) {
+    tr = [line(x, st.map(s => num(s.steady_out_tok_per_s)), "Çıkış tok/s (kararlı)", C[0]),
+          line(x, st.map(s => s.out_tok_per_s), "Çıkış tok/s (aşama ortalaması)", C[0], "dot")];
+    tr[1].marker.size = 6;
+  } else tr = [line(x, st.map(s => s.out_tok_per_s), "Çıkış tok/s", C[0])];
+  if (rec) {
+    const lx = Math.log10(rec.level);          // shapes/annotations use log10 coords on log axes
+    lay.shapes = [{type: "line", xref: "x", x0: lx, x1: lx, yref: "paper", y0: 0, y1: 1, line: {color: C[5], width: 1.5, dash: "dash"}}];
+    lay.annotations = [{xref: "x", x: lx, xanchor: "right", yref: "paper", y: 1, yanchor: "top", text: "SLO sınırı", showarrow: false, font: {color: C[5]}}];
+  }
+  out.push(chart("Throughput — yük arttıkça sistem ne kadar üretiyor?", tr, lay, {xlog: xl}));
+
+  tr = ["p50", "p95", "p99"].map((p, i) => line(x, st.map(s => s.ttft[p]), `TTFT ${p}`, C[i]));
+  if (hasTtfo) tr.push(line(x, st.map(s => g(s, "ttfo", "p95")), "TTFO p95", C[3], "dash"));
+  out.push(chart("TTFT — ilk token'a kadar bekleme", tr,
+    withSlo({xaxis: {title: {text: xt}}, yaxis: {title: {text: "ms"}}}, slo.ttft_ms, `${G(slo.ttft_ms)} ms`), {xlog: xl}));
+
+  tr = ["p50", "p95"].map((p, i) => line(x, st.map(s => g(s, "tpot", p)), `TPOT ${p}`, C[i]));
+  tr.push(line(x, st.map(s => g(s, "itl", "p99")), "ITL p99", C[2], "dot"));
+  out.push(chart("TPOT / ITL — token başına üretim süresi", tr,
+    withSlo({xaxis: {title: {text: xt}}, yaxis: {title: {text: "ms / token"}}}, slo.tpot_ms, `${G(slo.tpot_ms)} ms`), {xlog: xl}));
+
+  tr = ["p50", "p95"].map((p, i) => line(x, st.map(s => s.e2e[p] / 1000), `E2E ${p}`, C[i]));
+  out.push(chart("Uçtan uca yanıt süresi", tr, {xaxis: {title: {text: xt}}, yaxis: {title: {text: "saniye"}}}, {xlog: xl}));
+
+  out.push(chart("Verim ↔ kullanıcı deneyimi dengesi (sağ üst = iyi)", [{
+    type: "scatter", mode: "lines+markers+text", x: st.map(tok), y: st.map(s => s.user_tok_per_s), text: st.map(s => lvl(run, s.level)),
+    textposition: "top right", line: {color: C[0], width: 2}, marker: {size: 8}, name: run.name,
+    hovertemplate: "%{text}<br>sistem %{x:,.0f} tok/s<br>kullanıcı %{y:.1f} tok/s<extra></extra>"}],
+    {xaxis: {title: {text: "Sistem throughput (tok/s)"}}, yaxis: {title: {text: "Kullanıcı başına tok/s"}}, hovermode: "closest", showlegend: false}));
+
+  out.push(chart("Goodput — SLO'yu karşılayan isteklerin oranı (yeşil ≥ %90)", [{
+    type: "bar", x: x.map(G), y: st.map(s => s.goodput_pct), name: "Goodput %",
+    marker: {color: st.map(s => s.goodput_pct >= 90 ? C[2] : C[7]), cornerradius: 4},
+    text: st.map(s => `${s.goodput_pct.toFixed(0)}%`), textposition: "outside", cliponaxis: false}],
+    {xaxis: {title: {text: xt}, type: "category"}, yaxis: {title: {text: "% istek"}, range: [0, 110]}, showlegend: false}));
+
+  const sv = st.filter(s => s.server && s.server.prefill_ms != null);
+  let src, bars;
+  if (sv.length) {
+    src = "sunucu (vLLM /metrics)";
+    bars = [["queue_ms", "Kuyruk"], ["prefill_ms", "Prefill"], ["decode_ms", "Decode"]].map(([k, name], i) => ({
+      type: "bar", x: sv.map(s => lvl(run, s.level)), y: sv.map(s => s.server[k] || 0), name,
+      marker: {color: C[i], line: {width: 2, color: "rgba(0,0,0,0)"}}}));
+  } else {
+    src = "istemci (TTFT = kuyruk + prefill + ağ)";
+    bars = [["ttft", "İlk token (TTFT)"], ["decode", "Decode"]].map(([k, name], i) => ({
+      type: "bar", x: st.map(s => lvl(run, s.level)), y: st.map(s => s[k].mean), name, marker: {color: C[i]}}));
+  }
+  out.push(chart(`İstek süresi dağılımı — ${src}`, bars, {barmode: "stack", bargap: 0.35, yaxis: {title: {text: "ortalama ms"}}}));
+
+  if (st.some(s => (s.samples || []).length)) {
+    tr = st.map(s => ({type: "box", y: (s.samples || []).map(r => r[0]), name: lvl(run, s.level), marker: {color: C[0]}, boxpoints: false, line: {width: 1.5}}));
+    out.push(chart("TTFT dağılımı — kutu: p25–p75, bıyık: uç değerler", tr,
+      withSlo({yaxis: {title: {text: "TTFT ms"}}, showlegend: false, hovermode: "closest"}, slo.ttft_ms, `${G(slo.ttft_ms)} ms`)));
+  }
+  return out;
+}
+
+function timeline(run) {
+  const ts = run.timeseries || [], gs = run.gpu_series || [];
+  if (!ts.length) return "";
+  const t = ts.map(p => p.t), tr = [];
+  [["inflight", "İstemcide açık istek"], ["running", "vLLM çalışan"], ["waiting", "vLLM kuyrukta"]].forEach(([k, name], i) => {
+    if (ts.some(p => p[k] != null)) tr.push(plain(t, ts.map(p => p[k] ?? null), name, C[i]));
+  });
+  if (ts.some(p => p.kv != null)) tr.push(plain(t, ts.map(p => p.kv ?? null), "KV cache %", C[3], {xaxis: "x2", yaxis: "y2"}));
+  if (gs.length) tr.push(plain(gs.map(p => p.t), gs.map(p => p.util), "GPU util %", C[6], {xaxis: "x2", yaxis: "y2"}));
+  const shapes = [], ann = [
+    {xref: "paper", yref: "paper", x: 0, xanchor: "left", y: 1, yanchor: "bottom", text: "İstek sayısı", showarrow: false, font: {size: 12}},
+    {xref: "paper", yref: "paper", x: 0, xanchor: "left", y: 0.4, yanchor: "bottom", text: "Doluluk (%)", showarrow: false, font: {size: 12}}];
+  run.stages.forEach((s, i) => {
+    if (s.t_start == null) return;
+    if (i % 2) shapes.push({type: "rect", xref: "x", yref: "paper", x0: s.t_start, x1: s.t_end, y0: 0, y1: 1, fillcolor: "rgba(136,136,136,0.12)", line: {width: 0}, layer: "below"});
+    ann.push({xref: "x", yref: "paper", x: s.t_start, xanchor: "left", y: 1, yanchor: "top", text: lvl(run, s.level), showarrow: false, font: {size: 10}});
+  });
+  return chart("Zaman çizelgesi — yük, kuyruk, KV cache ve GPU", tr, {
+    margin: {l: 56, r: 16, t: 56, b: 40}, shapes, annotations: ann,
+    xaxis: {showticklabels: false, anchor: "y"}, yaxis: {domain: [0.5, 1], anchor: "x"},
+    xaxis2: {matches: "x", anchor: "y2", showgrid: true, zeroline: false, title: {text: "test başından itibaren saniye"}},
+    yaxis2: {domain: [0, 0.4], anchor: "x2", range: [0, 105], showgrid: true, zeroline: false}
+  }, {height: 460}).replace('class="card"', 'class="card wide"');
+}
+
+function compareCharts(runs) {
+  const xl = levelsOf(runs), slo = runs[0].config.slo, out = [];
+  const steadyAll = runs.every(r => stages(r).every(s => s.steady_out_tok_per_s != null));
+  const specs = [
+    ["Throughput (çıkış tok/s)", "token / s", s => steadyAll ? s.steady_out_tok_per_s : s.out_tok_per_s],
+    ["TTFT p95", "ms", s => s.ttft.p95], ["TPOT p95", "ms / token", s => g(s, "tpot", "p95")], ["Goodput %", "% istek", s => s.goodput_pct]];
+  for (const [title, yt, fn] of specs) {
+    const tr = runs.map((r, i) => { const st = stages(r); return line(st.map(s => s.level), st.map(fn), r.name, C[i % C.length]); });
+    let lay = {xaxis: {title: {text: "Yük"}}, yaxis: {title: {text: yt}}};
+    if (title === "TTFT p95") lay = withSlo(lay, slo.ttft_ms, `${G(slo.ttft_ms)} ms`);
+    if (title === "TPOT p95") lay = withSlo(lay, slo.tpot_ms, `${G(slo.tpot_ms)} ms`);
+    out.push(chart(title, tr, lay, {xlog: xl}));
+  }
+  const tr = runs.map((r, i) => { const st = stages(r); return {
+    type: "scatter", mode: "lines+markers", x: st.map(tok), y: st.map(s => s.user_tok_per_s), name: r.name, text: st.map(s => lvl(r, s.level)),
+    line: {color: C[i % C.length], width: 2}, marker: {size: 8}, hovertemplate: "%{text}<br>sistem %{x:,.0f} tok/s<br>kullanıcı %{y:.1f} tok/s"}; });
+  out.push(chart("Verim ↔ kullanıcı deneyimi (sağ üst = iyi)", tr,
+    {xaxis: {title: {text: "Sistem throughput (tok/s)"}}, yaxis: {title: {text: "Kullanıcı başına tok/s"}}, hovermode: "closest"}));
+  return out;
+}
+
+// ---------------------------------------------------------------- tables
+
+const table = (head, rows) => `<div class="tbl"><table><thead><tr>${head.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+
+function stageTable(run) {
+  const slo = run.config.slo, steady = run.stages.some(s => s.steady_out_tok_per_s != null), ttfo = run.stages.some(s => s.ttfo);
+  const bad = (v, lim) => v != null && v > lim ? ' class="bad"' : "";
+  const head = ["Yük", "Başarılı", "İstek/s", "Çıkış tok/s", ...(steady ? ["Kararlı tok/s"] : []), "TTFT p50", "TTFT p95", "TTFT p99",
+    ...(ttfo ? ["TTFO p95"] : []), "TPOT p50", "TPOT p95", "ITL p99", "E2E p95 (s)", "Goodput", "Kuyruk ms", "Prefill ms", "KV max", "GPU ort."];
+  const rows = run.stages.map(s => {
+    if (!s.ttft) return `<tr><td>${esc(lvl(run, s.level))}</td><td colspan="${head.length - 1}">tüm istekler başarısız: ${esc(((s.error_samples || [])[0] || {}).error)}</td></tr>`;
+    const sv = s.server || {}, gp = s.gpu || {};
+    return `<tr><td>${esc(lvl(run, s.level))}</td><td>${s.ok}/${s.requests}</td><td>${f(s.req_per_s, 2)}</td><td>${f(s.out_tok_per_s)}</td>` +
+      (steady ? `<td>${f(s.steady_out_tok_per_s)}</td>` : "") +
+      `<td>${f(s.ttft.p50)}</td><td${bad(s.ttft.p95, slo.ttft_ms)}>${f(s.ttft.p95)}</td><td>${f(s.ttft.p99)}</td>` +
+      (ttfo ? `<td>${f(g(s, "ttfo", "p95"))}</td>` : "") +
+      `<td>${f(g(s, "tpot", "p50"), 1)}</td><td${bad(g(s, "tpot", "p95"), slo.tpot_ms)}>${f(g(s, "tpot", "p95"), 1)}</td>` +
+      `<td>${f(g(s, "itl", "p99"), 1)}</td><td>${f(s.e2e.p95 / 1000, 2)}</td><td>${f(s.goodput_pct, 0, "%")}</td>` +
+      `<td>${f(sv.queue_ms)}</td><td>${f(sv.prefill_ms)}</td><td>${f(sv.kv_cache_max_pct, 0, "%")}</td><td>${f(gp.util_mean, 0, "%")}</td></tr>`;
+  });
+  return table(head, rows);
+}
+
+function compareTable(runs) {
+  const rows = runs.map((r, i) => {
+    const st = stages(r), rec = recommend(r), peak = st.length ? maxBy(st, tok) : null;
+    return `<tr><td><span class="dot" style="background:${C[i % C.length]}"></span>${esc(r.name)}</td><td>${esc((r.resolved || {}).model || "")}</td>` +
+      `<td>${rec ? G(rec.level) : "Yok"}</td><td>${rec ? f(rec.out_tok_per_s) : "–"}</td><td>${peak ? f(tok(peak)) : "–"}</td>` +
+      `<td>${st.length ? f(st[0].ttft.p50) : "–"}</td><td>${st.length ? f(st[0].user_tok_per_s) : "–"}</td>` +
+      `<td>${(r.stages || []).reduce((a, s) => a + s.errors, 0)}</td></tr>`;
+  });
+  return table(["Test", "Model", "SLO içi kapasite", "SLO'da tok/s", "Tepe tok/s", "TTFT p50 (ms, en düşük yük)", "Kullanıcı tok/s", "Hata"], rows);
+}
+
+function configBlock(run) {
+  const c = run.config, rs = run.resolved || {}, cal = run.calibration || {}, ds = c.dataset, ld = c.load;
+  const data = [
+    ["Endpoint", `${c.endpoint.type} → ${rs.base_url || ""}`], ["Model", rs.model || c.model], ["max_model_len", rs.max_model_len],
+    ["vLLM metrics", rs.metrics_url || "yok"], ["GPU sayısı (DCGM)", rs.gpus || "yok"],
+    ["Veri seti", ds.type + (ds.type === "synthetic"
+      ? ` · giriş ${ds.input_tokens}±${G(ds.input_std || 0)} / çıkış ${ds.output_tokens}±${G(ds.output_std || 0)} token` + (ds.shared_prefix_tokens ? ` · ortak önek ${ds.shared_prefix_tokens}` : "")
+      : ` · max çıkış ${ds.output_tokens}`)],
+    ["Yük", `${ld.mode} · seviyeler ${(ld.levels || []).map(G).join(", ")} · seviye başına ${ld.requests_per_stage} istek` + (ld.mode === "rate" && ld.burstiness != null ? ` · burstiness ${G(ld.burstiness)}` : "")],
+    ["ignore_eos", c.ignore_eos], ["SLO", `p95 TTFT ≤ ${G(c.slo.ttft_ms)} ms, p95 TPOT ≤ ${G(c.slo.tpot_ms)} ms`],
+    ["Kalibrasyon", cal.tokens_per_word != null ? `${cal.tokens_per_word} token/kelime` : "–"],
+    ["Başlangıç / bitiş", `${run.created} → ${run.finished || "…"}`], ["Durum", run.status]];
+  return `<dl class="cfg">${data.filter(([, v]) => v != null).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
+}
+
+const GLOSSARY = `
+<dl class="gloss">
+<dt>TTFT</dt><dd>İsteği gönderdikten ilk token gelene kadar geçen süre. Kuyruk bekleme + prefill (girdinin işlenmesi) + ağ. Kullanıcının "cevap başladı" hissi.</dd>
+<dt>TPOT</dt><dd>İlk token sonrası token başına ortalama süre: (E2E − TTFT) / (çıkış token − 1). Metnin akış hızı; 1000/TPOT = kullanıcının gördüğü tok/s.</dd>
+<dt>ITL</dt><dd>Ardışık iki stream parçası arası süre. p99 değeri akıştaki takılmaları gösterir.</dd>
+<dt>Prefill / Decode</dt><dd>Prefill girdinin tek seferde işlendiği, hesaplama ağırlıklı aşama; decode token'ların tek tek üretildiği, bellek bant genişliği ağırlıklı aşama. Sunucu değerleri vLLM /metrics histogramlarından alınır.</dd>
+<dt>Goodput</dt><dd>Hem TTFT hem TPOT SLO'sunu karşılayan isteklerin oranı. Ham throughput yerine kapasite planlamasında bu kullanılmalı.</dd>
+<dt>SLO içi kapasite</dt><dd>p95 TTFT ve p95 TPOT hedefin altında, hata oranı %1'in altında kalan en yüksek yük seviyesi.</dd>
+<dt>KV cache</dt><dd>Aktif isteklerin bağlamını tutan GPU belleği. %100'e yaklaşınca yeni istekler kuyrukta bekler veya preempt edilir.</dd>
+<dt>TTFO</dt><dd>Reasoning modellerde ilk çıktı (düşünme dışı) token'ına kadar geçen süre.</dd>
+</dl>`;
+
+// ---------------------------------------------------------------- page
+
+function render(runs) {
+  if (!runs.length) return ["Inference Bench", "Test seçilmedi", ""];
+  if (runs.length > 1) {
+    const body = `<h2>Özet</h2>${compareTable(runs)}<h2>Ne anlama geliyor?</h2>` +
+      runs.map(r => `<div class="insights"><ul><li>${insights(r)[0]}</li></ul></div>`).join("") +
+      `<h2>Karşılaştırma grafikleri</h2><div class="grid">${compareCharts(runs).join("")}</div><h2>Terimler</h2>${GLOSSARY}`;
+    return ["Model karşılaştırma", runs.map(r => esc(r.name)).join(", "), body];
+  }
+  const run = runs[0], rs = run.resolved || {};
+  const tiles = kpis(run).map(([l, v, u, cls]) => `<div class="kpi ${cls}"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div><div class="u">${esc(u)}</div></div>`).join("");
+  let warns = (run.warnings || []).map(w => `<li class="warn">${esc(w)}</li>`).join("");
+  if (run.error) warns += `<li class="warn">Hata: ${esc(run.error)}</li>`;
+  const charts = stages(run).length ? singleCharts(run) : [], tl = timeline(run);
+  const body = `<div class="kpis">${tiles}</div><h2>Ne anlama geliyor?</h2><div class="insights"><ul>${insights(run).map(i => `<li>${i}</li>`).join("")}${warns}</ul></div>` +
+    `<h2>Grafikler</h2><div class="grid">${charts.join("")}${tl}</div><h2>Seviye bazında sonuçlar</h2>${stageTable(run)}` +
+    `<h2>Test ayarları</h2>${configBlock(run)}<h2>Terimler</h2>${GLOSSARY}`;
+  return [run.name, `${esc(rs.model || run.config.model)} · ${esc(rs.base_url || "")} · ${esc((run.created || "").slice(0, 16).replace("T", " "))}`, body];
+}
+
+// ---------------------------------------------------------------- theme
+
+function paint() {
+  const cs = getComputedStyle(document.documentElement), fg = cs.getPropertyValue("--text-2").trim(), grid = cs.getPropertyValue("--grid").trim();
+  document.querySelectorAll(".js-plotly-plot").forEach(d => {
+    const u = {"font.color": fg};
+    Object.keys(d.layout).filter(k => /^[xy]axis\d*$/.test(k)).forEach(k => { u[k + ".gridcolor"] = grid; u[k + ".linecolor"] = grid; });
+    Plotly.relayout(d, u);
+  });
+}
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("llmbench-theme", t); } catch (e) {}
+  document.getElementById("tt").textContent = t === "dark" ? "☀ Açık" : "☾ Koyu";
+  paint();
+}
+document.getElementById("tt").onclick = () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+
+try {
+  const runs = JSON.parse(document.getElementById("runs").textContent);
+  const [title, sub, body] = render(Array.isArray(runs) ? runs : [runs]);
+  document.title = title;
+  document.getElementById("ttl").textContent = title;
+  document.getElementById("sub").innerHTML = sub;
+  document.getElementById("body").innerHTML = body;
+  const dates = [...new Set((Array.isArray(runs) ? runs : [runs]).map(r => (r.created || "").slice(0, 10)).filter(Boolean))];
+  document.getElementById("foot").textContent = "Inference Bench · ibench" + (dates.length ? " · " + dates.join(", ") : "");
+  queue.forEach(([id, tr, lay]) => Plotly.newPlot(id, tr, lay, PCFG));
+} catch (e) {
+  document.getElementById("body").innerHTML = `<p class="warn">Rapor oluşturulamadı: ${esc(e && e.message)}</p>`;
+  throw e;
+}
+let t0 = "light"; try { t0 = localStorage.getItem("llmbench-theme") || "light"; } catch (e) {}
+setTheme(t0 === "dark" ? "dark" : "light");
+</script>
+</body>
+</html>

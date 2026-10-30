@@ -1,6 +1,7 @@
 .git
-__pycache__
-*.pyc
-data/
-*.json
-openshift/
+ibench
+ibench-data
+docs
+tools
+openshift
+*.md

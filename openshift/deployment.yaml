@@ -1,34 +1,34 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: llm-bench
+  name: inference-bench
   annotations:
-    # roll out automatically when a new build lands in llm-bench:latest
-    image.openshift.io/triggers: '[{"from":{"kind":"ImageStreamTag","name":"llm-bench:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"app\")].image"}]'
+    # roll out automatically when a new build lands in inference-bench:latest
+    image.openshift.io/triggers: '[{"from":{"kind":"ImageStreamTag","name":"inference-bench:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"app\")].image"}]'
 spec:
   replicas: 1
   strategy:
     type: Recreate   # RWO PVC + one benchmark at a time
   selector:
     matchLabels:
-      app: llm-bench
+      app: inference-bench
   template:
     metadata:
       labels:
-        app: llm-bench
+        app: inference-bench
     spec:
-      serviceAccountName: llm-bench
+      serviceAccountName: inference-bench
       containers:
         - name: app
-          image: image-registry.openshift-image-registry.svc:5000/llm-bench/llm-bench:latest
+          image: image-registry.openshift-image-registry.svc:5000/inference-bench/inference-bench:latest
+          args: [serve, -addr, ":8080"]
           ports:
             - containerPort: 8080
           env:
             - {name: DATA_DIR, value: /data}
-            - {name: SHAREGPT_PATH, value: /app/data/sharegpt.jsonl}
           resources:
-            requests: {cpu: 250m, memory: 512Mi}
-            limits: {cpu: "2", memory: 1Gi}
+            requests: {cpu: 200m, memory: 256Mi}
+            limits: {cpu: "4", memory: 1Gi}   # Go client uses several cores at high concurrency
           livenessProbe:
             httpGet: {path: /healthz, port: 8080}
             initialDelaySeconds: 10
@@ -44,9 +44,9 @@ spec:
             - --https-address=:8443
             - --http-address=
             - --upstream=http://localhost:8080
-            - --openshift-service-account=llm-bench
+            - --openshift-service-account=inference-bench
             # only users who can get pods in this namespace
-            - --openshift-sar={"namespace":"llm-bench","resource":"pods","verb":"get"}
+            - --openshift-sar={"namespace":"inference-bench","resource":"pods","verb":"get"}
             - --tls-cert=/etc/tls/private/tls.crt
             - --tls-key=/etc/tls/private/tls.key
             - --cookie-secret-file=/etc/proxy/secrets/session_secret
@@ -62,8 +62,8 @@ spec:
             - {name: proxy-cookie, mountPath: /etc/proxy/secrets}
       volumes:
         - name: data
-          persistentVolumeClaim: {claimName: llm-bench-data}
+          persistentVolumeClaim: {claimName: inference-bench-data}
         - name: proxy-tls
-          secret: {secretName: llm-bench-tls}
+          secret: {secretName: inference-bench-tls}
         - name: proxy-cookie
-          secret: {secretName: llm-bench-cookie}   # created by hand, see README
+          secret: {secretName: inference-bench-cookie}   # created by hand, see README

@@ -1,11 +1,11 @@
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
-  name: llm-bench
+  name: inference-bench
 spec:
   to:
     kind: Service
-    name: llm-bench
+    name: inference-bench
   port:
     targetPort: https
   tls:
