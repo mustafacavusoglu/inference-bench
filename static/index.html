@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM Bench</title>
+<script>try{var t=localStorage.getItem('llmbench-theme');if(t==='dark')document.documentElement.dataset.theme='dark'}catch(e){}</script>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--muted:#6b7280;--border:#d9dde4;--accent:#2563eb;--accent-fg:#fff;--input:#fff;--bad:#c62828;--badbg:#fdecea;--ok:#2e7d32;--warn:#b26a00;--grid:#e5e7eb;color-scheme:light}
+:root[data-theme="dark"]{--bg:#12151b;--card:#1b2029;--fg:#e4e7ec;--muted:#98a1b0;--border:#2f3744;--accent:#5b92f5;--accent-fg:#0b1220;--input:#12151b;--bad:#ff7a70;--badbg:#3a1f1f;--ok:#6fcf74;--warn:#e5a84b;--grid:#2a313d;color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--card)}
+h1{font-size:18px;margin:0}h2{font-size:15px;margin:0 0 10px}
+main{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:16px;padding:16px;max-width:1500px;margin:0 auto}
+@media(max-width:900px){main{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:16px}
+.col>.card:last-child{margin-bottom:0}
+.row{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px}
+.f{display:flex;flex-direction:column;gap:3px;flex:1 1 140px;min-width:0}
+.f.full{flex-basis:100%}
+.f.chk{flex-direction:row;align-items:center;gap:6px}
+label,.lbl{font-size:12px;color:var(--muted)}
+.chk label{color:var(--fg);font-size:13px}
+input,select,button{font:inherit;color:var(--fg)}
+input[type=text],input[type=number],input[type=password],select{background:var(--input);border:1px solid var(--border);border-radius:6px;padding:6px 8px;width:100%;min-width:0}
+input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+button{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--accent)}
+button:disabled{opacity:.5;cursor:default}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+button.danger{color:var(--bad)}
+button.icon{padding:2px 8px;border:none;background:none;color:var(--muted)}
+.hint{font-size:12px;color:var(--muted)}
+.msg{margin:8px 0 0;padding:6px 10px;border-radius:6px;font-size:13px;white-space:pre-wrap;word-break:break-word}
+.msg.err{background:var(--badbg);color:var(--bad)}
+.msg.ok{border:1px solid var(--border)}
+.msg.warn{border:1px solid var(--warn);color:var(--warn)}
+details{border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px}
+summary{cursor:pointer;font-weight:600;font-size:13px}
+details[open] summary{margin-bottom:10px}
+.radios{display:flex;gap:14px;align-items:center;padding:4px 0}.radios label{color:var(--fg);font-size:13px}
+.btns{display:flex;gap:8px;flex-wrap:wrap}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{padding:5px 8px;text-align:right;border-bottom:1px solid var(--border);white-space:nowrap}
+th{color:var(--muted);font-weight:600;font-size:12px}
+th:first-child,td:first-child,td.l,th.l{text-align:left}
+td.bad{color:var(--bad);font-weight:600}
+#hist tr[data-id]{cursor:pointer}#hist tr[data-id]:hover{background:var(--bg)}#hist tr.cur{background:var(--bg)}
+a{color:var(--accent)}
+.badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;border:1px solid var(--border)}
+.badge.running{color:var(--accent);border-color:var(--accent)}.badge.done{color:var(--ok);border-color:var(--ok)}
+.badge.failed{color:var(--bad);border-color:var(--bad)}.badge.stopped{color:var(--warn);border-color:var(--warn)}
+.bar{height:8px;background:var(--grid);border-radius:4px;overflow:hidden;margin:6px 0}
+.bar>div{height:100%;background:var(--accent);width:0;transition:width .4s}
+.top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap}
+.muted{color:var(--muted)}
+#chart{height:360px;margin-top:10px}
+</style>
+</head>
+<body>
+<header>
+  <h1>LLM Bench</h1>
+  <button id="theme" type="button"></button>
+</header>
+<main>
+<div class="col">
+<form id="form" class="card" autocomplete="off">
+  <h2>Yeni test</h2>
+  <div class="row">
+    <div class="f"><label for="name">Test adı (opsiyonel)</label><input type="text" id="name" placeholder="qwen3-8b-h100"></div>
+    <div class="f"><label for="ep_type">Endpoint türü</label>
+      <select id="ep_type">
+        <option value="litellm">LiteLLM</option><option value="service">Kubernetes Service</option>
+        <option value="route">OpenShift Route</option><option value="pod">Pod</option><option value="url">Doğrudan URL</option>
+      </select></div>
+  </div>
+  <div class="hint" id="ep_hint" style="margin-bottom:10px"></div>
+  <div class="row">
+    <div class="f full" data-ep="litellm,url,pod"><label for="ep_url">URL</label><input type="text" id="ep_url" placeholder="http://litellm.llm.svc:4000"></div>
+    <div class="f" data-ep="service,route,pod"><label for="ep_name">Kaynak adı</label><input type="text" id="ep_name"></div>
+    <div class="f" data-ep="service,route,pod"><label for="ep_ns">Namespace</label><input type="text" id="ep_ns"></div>
+    <div class="f" data-ep="service,pod"><label for="ep_port">Port</label><input type="number" id="ep_port" value="8080" min="1" max="65535"></div>
+    <div class="f" data-ep="service,pod"><label for="ep_scheme">Şema</label><select id="ep_scheme"><option>http</option><option>https</option></select></div>
+    <div class="f full"><label for="ep_key">API anahtarı / bearer token (opsiyonel)</label><input type="password" id="ep_key" autocomplete="new-password"></div>
+    <div class="f full"><label for="model">Model <span data-ep="litellm">(zorunlu)</span></label>
+      <input type="text" id="model" list="models" placeholder="boşsa otomatik algılanır"><datalist id="models"></datalist></div>
+  </div>
+  <div class="btns" style="margin-bottom:10px"><button type="button" id="resolve">Bağlantıyı test et</button></div>
+  <div id="resolveOut" class="msg ok" hidden></div>
+
+  <h2 style="margin-top:14px">Veri seti</h2>
+  <div class="row">
+    <div class="f"><label for="ds_type">Tür</label>
+      <select id="ds_type"><option value="synthetic">Sentetik</option><option value="sharegpt">ShareGPT</option><option value="custom">Özel (.jsonl)</option></select></div>
+    <div class="f" data-ds="synthetic"><label for="preset">Hazır profil</label>
+      <select id="preset"><option value="">Seçin…</option><option value="512,256">Sohbet (512/256)</option><option value="2048,256">RAG (2048/256)</option><option value="4096,512">Özet (4096/512)</option><option value="1024,1024">Kod (1024/1024)</option><option value="8192,256">Uzun bağlam (8192/256)</option></select></div>
+  </div>
+  <div class="row">
+    <div class="f" data-ds="synthetic"><label for="in_tok">Girdi token</label><input type="number" id="in_tok" value="512" min="1"></div>
+    <div class="f"><label for="out_tok" id="out_lbl">Çıktı token</label><input type="number" id="out_tok" value="256" min="1"></div>
+  </div>
+  <div class="row" data-ds="custom">
+    <div class="f"><label for="ds_custom">Yüklü veri setleri</label><select id="ds_custom"></select></div>
+    <div class="f"><label for="ds_file">Yeni yükle (.jsonl)</label><input type="file" id="ds_file" accept=".jsonl,.json"></div>
+    <div class="hint f full">Her satır: <code>{"prompt": "...", "max_tokens": 256}</code> (max_tokens opsiyonel)</div>
+    <div class="f full" id="dsMsg" hidden></div>
+  </div>
+
+  <h2 style="margin-top:14px">Yük</h2>
+  <div class="radios"><span class="lbl">Mod:</span>
+    <label><input type="radio" name="mode" id="mode_c" value="concurrency" checked> Eşzamanlılık</label>
+    <label><input type="radio" name="mode" id="mode_r" value="rate"> İstek hızı (req/s)</label></div>
+  <div class="row">
+    <div class="f full"><label for="levels" id="lv_lbl">Seviyeler (virgülle)</label><input type="text" id="levels" value="1,2,4,8,16,32,64"></div>
+    <div class="f"><label for="reqs">Aşama başına istek</label><input type="number" id="reqs" value="100" min="1"></div>
+    <div class="f" data-mode="rate"><label for="maxc">Maks. eşzamanlılık</label><input type="number" id="maxc" value="256" min="1"></div>
+    <div class="f" data-mode="rate"><label for="burst">Burstiness (1 = Poisson)</label><input type="number" id="burst" value="1" step="0.1" min="0.1"></div>
+  </div>
+  <div class="row"><div class="f chk"><input type="checkbox" id="ignore_eos" checked><label for="ignore_eos">Çıkış uzunluğunu sabitle (ignore_eos)</label></div></div>
+
+  <details>
+    <summary>Gelişmiş</summary>
+    <div class="row">
+      <div class="f"><label for="warmup">Warmup istek</label><input type="number" id="warmup" value="4" min="0"></div>
+      <div class="f"><label for="timeout">İstek zaman aşımı (sn)</label><input type="number" id="timeout" value="300" min="1"></div>
+      <div class="f chk"><input type="checkbox" id="ep_verify" checked><label for="ep_verify">TLS doğrula</label></div>
+      <div class="f full"><label for="ep_metrics">vLLM /metrics URL (opsiyonel; LiteLLM için sunucu tarafı prefill/decode/KV cache)</label><input type="text" id="ep_metrics" placeholder="http://vllm.llm.svc:8000/metrics"></div>
+    </div>
+    <div class="row">
+      <div class="f" data-ds="synthetic"><label for="in_std">Girdi std</label><input type="number" id="in_std" value="0" min="0"></div>
+      <div class="f" data-ds="synthetic"><label for="out_std">Çıktı std</label><input type="number" id="out_std" value="0" min="0"></div>
+      <div class="f" data-ds="synthetic"><label for="prefix">Ortak prefix token (prefix cache)</label><input type="number" id="prefix" value="0" min="0"></div>
+    </div>
+    <div class="row">
+      <div class="f"><label for="slo_ttft">SLO: TTFT (ms)</label><input type="number" id="slo_ttft" value="2000" min="0"></div>
+      <div class="f"><label for="slo_tpot">SLO: TPOT (ms)</label><input type="number" id="slo_tpot" value="100" min="0"></div>
+    </div>
+    <div class="row">
+      <div class="f chk full"><input type="checkbox" id="prom_en" checked><label for="prom_en">GPU telemetrisi (OpenShift monitoring / DCGM)</label></div>
+      <div class="f full"><label for="prom_url">Prometheus URL (boş = cluster içi thanos-querier)</label><input type="text" id="prom_url"></div>
+      <div class="f full"><label for="prom_sel">GPU seçici</label><input type="text" id="prom_sel" placeholder='exported_namespace="llm",exported_pod=~"qwen.*"'></div>
+    </div>
+  </details>
+  <div class="btns"><button type="submit" class="primary" id="start">Testi başlat</button></div>
+  <div id="formMsg" class="msg err" hidden></div>
+</form>
+</div>
+
+<div class="col">
+  <section class="card" id="active">
+    <h2>Aktif test</h2>
+    <div id="activeBody" class="muted">Çalışan test yok. Geçmişten bir test seçebilir veya yeni test başlatabilirsiniz.</div>
+  </section>
+  <section class="card">
+    <div class="top"><h2>Geçmiş</h2><button type="button" id="cmp" disabled>Karşılaştır</button></div>
+    <div class="tbl"><table id="hist"></table></div>
+  </section>
+</div>
+</main>
+<script src="/static/plotly.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+  set(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+};
+async function api(path, opts){
+  const r = await fetch(path, opts);
+  let body = null; try { body = await r.json(); } catch(e){}
+  if (!r.ok) {
+    const d = body && body.detail;
+    throw new Error(typeof d === 'string' ? d : d ? JSON.stringify(d) : 'HTTP ' + r.status);
+  }
+  return body;
+}
+const num = (id, d) => { const v = parseFloat($(id).value); return isFinite(v) ? v : d; };
+const fmt = (v, d = 0) => (v == null || !isFinite(v)) ? '–' : Number(v).toLocaleString('tr-TR', {maximumFractionDigits: d, minimumFractionDigits: d});
+const dt = s => s ? new Date(s).toLocaleString('tr-TR', {dateStyle:'short', timeStyle:'short'}) : '–';
+const STATUS = {running:'çalışıyor', done:'bitti', failed:'hata', stopped:'durduruldu'};
+const badge = s => `<span class="badge ${esc(s)}">${esc(STATUS[s] || s)}</span>`;
+const cssv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+/* ---- theme ---- */
+function applyTheme(t){
+  if (t === 'dark') document.documentElement.dataset.theme = 'dark'; else delete document.documentElement.dataset.theme;
+  $('theme').textContent = t === 'dark' ? 'Açık mod' : 'Koyu mod';
+  drawChart();
+}
+$('theme').onclick = () => {
+  const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  store.set('llmbench-theme', t); applyTheme(t);
+};
+
+/* ---- form ---- */
+const HINTS = {
+  litellm: 'LiteLLM proxy: base URL (örn. http://litellm.llm.svc:4000). Model adı zorunlu.',
+  service: 'http://<ad>.<namespace>.svc:<port>',
+  route: 'OpenShift Route: https://<route-host> adresi kaynak adı + namespace ile bulunur.',
+  pod: 'Pod adı + namespace + port; ya da ham IP için URL girin (http://10.0.0.5:8000).',
+  url: 'OpenAI uyumlu base URL (örn. http://host:8000).'
+};
+const radio = () => $('mode_r').checked ? 'rate' : 'concurrency';
+function vis(){
+  const ep = $('ep_type').value, mode = radio(), ds = $('ds_type').value;
+  document.querySelectorAll('[data-ep],[data-mode],[data-ds]').forEach(el => {
+    const d = el.dataset;
+    el.hidden = (d.ep && !d.ep.split(',').includes(ep)) || (d.mode && d.mode !== mode) || (d.ds && d.ds !== ds);
+  });
+  $('ep_hint').textContent = HINTS[ep];
+  $('lv_lbl').textContent = mode === 'rate' ? 'Seviyeler: istek/s (virgülle, ondalık olabilir)' : 'Seviyeler: eşzamanlı istek (virgülle)';
+  $('out_lbl').textContent = ds === 'synthetic' ? 'Çıktı token' : 'Çıktı token (max_tokens üst sınırı)';
+}
+['ep_type','ds_type','mode_c','mode_r'].forEach(id => $(id).addEventListener('change', vis));
+$('preset').onchange = e => { if (e.target.value) { [$('in_tok').value, $('out_tok').value] = e.target.value.split(','); } };
+
+function endpoint(){
+  return {
+    type: $('ep_type').value, url: $('ep_url').value.trim(), name: $('ep_name').value.trim(), namespace: $('ep_ns').value.trim(),
+    port: num('ep_port', 8080), scheme: $('ep_scheme').value, api_key: $('ep_key').value,
+    verify_tls: $('ep_verify').checked, metrics_url: $('ep_metrics').value.trim()
+  };
+}
+function config(){
+  const rate = radio() === 'rate';
+  const levels = $('levels').value.split(/[,\s]+/).filter(Boolean).map(Number);
+  if (!levels.length || levels.some(x => !isFinite(x) || x <= 0)) throw new Error('Seviyeler geçerli pozitif sayılar olmalı (örn. 1,2,4,8).');
+  const ds = $('ds_type').value;
+  if (ds === 'custom' && !$('ds_custom').value) throw new Error('Özel veri seti seçin veya yükleyin.');
+  const ep = endpoint(), model = $('model').value.trim();
+  if (ep.type === 'litellm' && !model) throw new Error('LiteLLM için model adı zorunlu ("Bağlantıyı test et" ile listeyi alabilirsiniz).');
+  return {
+    name: $('name').value.trim(), endpoint: ep, model,
+    dataset: {type: ds, custom_name: ds === 'custom' ? $('ds_custom').value : '',
+      input_tokens: num('in_tok', 512), input_std: num('in_std', 0), output_tokens: num('out_tok', 256), output_std: num('out_std', 0),
+      shared_prefix_tokens: num('prefix', 0)},
+    load: {mode: rate ? 'rate' : 'concurrency', levels: rate ? levels : levels.map(Math.round),
+      requests_per_stage: num('reqs', 100), max_concurrency: num('maxc', 256), burstiness: num('burst', 1),
+      warmup: num('warmup', 4), timeout_s: num('timeout', 300)},
+    ignore_eos: $('ignore_eos').checked,
+    slo: {ttft_ms: num('slo_ttft', 2000), tpot_ms: num('slo_tpot', 100)},
+    prometheus: {enabled: $('prom_en').checked, url: $('prom_url').value.trim(), gpu_selector: $('prom_sel').value.trim()}
+  };
+}
+const SKIP = new Set(['ep_key','ds_file','preset']);
+const fields = () => [...$('form').querySelectorAll('input[id],select[id]')].filter(e => !SKIP.has(e.id));
+function saveForm(){
+  const o = {}; fields().forEach(e => o[e.id] = (e.type === 'checkbox' || e.type === 'radio') ? e.checked : e.value);
+  store.set('llmbench-last', JSON.stringify(o));
+}
+let savedCustom = '';
+function restoreForm(){
+  let o = null; try { o = JSON.parse(store.get('llmbench-last')); } catch(e){}
+  if (!o) return;
+  fields().forEach(e => { if (e.id in o && e.id !== 'ds_custom') { if (e.type === 'checkbox' || e.type === 'radio') e.checked = !!o[e.id]; else e.value = o[e.id]; } });
+  savedCustom = o.ds_custom || '';
+}
+function show(el, text, cls){ el.hidden = !text; el.textContent = text || ''; if (cls) el.className = 'msg ' + cls; }
+
+$('resolve').onclick = async () => {
+  const out = $('resolveOut'), b = $('resolve');
+  b.disabled = true; show(out, 'Test ediliyor…', 'ok');
+  try {
+    const r = await api('/api/resolve', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({endpoint: endpoint(), model: $('model').value.trim()})});
+    out.className = 'msg ok'; out.hidden = false;
+    out.innerHTML = `Bağlantı tamam: <b>${esc(r.base_url)}</b><br>` +
+      `Metrics: ${r.metrics_ok ? '<span style="color:var(--ok)">erişilebilir</span>' : '<span style="color:var(--warn)">erişilemiyor</span>'}` +
+      (r.metrics_url ? ' (' + esc(r.metrics_url) + ')' : '') +
+      (r.max_model_len ? `<br>max_model_len: ${esc(r.max_model_len)}` : '') +
+      `<br>Modeller: ${esc((r.models || []).join(', ') || '–')}`;
+    $('models').innerHTML = (r.models || []).map(m => `<option value="${esc(m)}">`).join('');
+    if (!$('model').value.trim() && r.models && r.models[0]) $('model').value = r.models[0];
+  } catch(e){ show(out, 'Bağlantı hatası: ' + e.message, 'err'); }
+  b.disabled = false;
+};
+
+/* ---- datasets ---- */
+async function loadDatasets(pick){
+  const sel = $('ds_custom'), prev = pick || sel.value || savedCustom;
+  try {
+    const list = await api('/api/datasets');
+    sel.innerHTML = list.length ? list.map(d => `<option value="${esc(d.name)}">${esc(d.name)} (${esc(d.count)})</option>`).join('') : '<option value="">(yok)</option>';
+    if (list.some(d => d.name === prev)) sel.value = prev;
+  } catch(e){ sel.innerHTML = '<option value="">(yüklenemedi)</option>'; }
+}
+$('ds_file').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const fd = new FormData(); fd.append('file', f);
+  const m = $('dsMsg');
+  try {
+    const r = await api('/api/datasets', {method:'POST', body: fd});
+    show(m, `Yüklendi: ${r.name} (${r.count} satır)`, 'msg ok'); m.className = 'f full msg ok';
+    await loadDatasets(r.name);
+  } catch(err){ show(m, 'Yükleme hatası: ' + err.message); m.className = 'f full msg err'; }
+  e.target.value = '';
+};
+
+/* ---- active run ---- */
+let curId = null, timer = null, lastRun = null, prevStatus = null;
+async function loadRun(id){
+  clearTimeout(timer);
+  if (id !== curId) { curId = id; prevStatus = null; lastRun = null; }
+  let r;
+  try { r = await api('/api/runs/' + encodeURIComponent(id)); }
+  catch(e){ if (id === curId) $('activeBody').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; return; }
+  if (id !== curId) return;
+  renderRun(r);
+  if (r.status === 'running') timer = setTimeout(() => loadRun(id), 2000);
+  else if (prevStatus === 'running') loadHistory();
+  prevStatus = r.status;
+  markCur();
+}
+const SLOW = (v, lim) => v != null && lim != null && v > lim;
+function renderRun(r){
+  lastRun = r;
+  const p = r.progress || {}, cfg = r.config || {}, slo = cfg.slo || {}, st = r.stages || [];
+  const running = r.status === 'running';
+  let pct = r.status === 'done' ? 100 : p.total ? Math.min(100, (st.length + (p.of ? (p.done || 0) / p.of : 0)) / p.total * 100) : 0;
+  const rows = st.map(s => {
+    const g = (o, k) => o ? o[k] : null, sv = s.server, gp = s.gpu;
+    return `<tr><td>${esc(s.level)}</td><td>${fmt(s.req_per_s, 2)}</td><td>${fmt(s.out_tok_per_s, 1)}</td>
+      <td>${fmt(g(s.ttft,'p50'))}</td><td class="${SLOW(g(s.ttft,'p95'), slo.ttft_ms) ? 'bad' : ''}">${fmt(g(s.ttft,'p95'))}</td>
+      <td>${fmt(g(s.tpot,'p50'), 1)}</td><td class="${SLOW(g(s.tpot,'p95'), slo.tpot_ms) ? 'bad' : ''}">${fmt(g(s.tpot,'p95'), 1)}</td>
+      <td>${fmt(g(s.e2e,'p95'))}</td><td>${fmt(s.goodput_pct, 1)}</td><td class="${s.errors ? 'bad' : ''}">${fmt(s.errors)}</td>
+      <td>${fmt(g(sv,'kv_cache_max_pct'), 1)}</td><td>${fmt(g(gp,'util_mean'), 0)}</td></tr>`;
+  }).join('');
+  $('activeBody').className = '';
+  $('activeBody').innerHTML = `
+    <div class="top"><div><b>${esc(r.name || r.id)}</b> ${badge(r.status)}<br>
+      <span class="muted">${esc((r.resolved && r.resolved.model) || cfg.model || '')} · ${esc(dt(r.created))}</span></div>
+      <div class="btns">${running ? '<button type="button" class="danger" id="stop">Durdur</button>'
+        : `<a href="/api/runs/${encodeURIComponent(r.id)}/report" target="_blank" rel="noopener">Raporu aç</a>`}</div></div>
+    ${running || p.total ? `<div class="bar"><div style="width:${pct}%"></div></div>
+    <div class="hint">${running ? `Aşama ${esc(p.stage ?? '–')}/${esc(p.total ?? '–')} · seviye ${esc(p.level ?? '–')} · ${esc(p.done ?? 0)}/${esc(p.of ?? '–')} istek · ${esc(p.phase || '')}` : `${st.length}/${esc(p.total ?? st.length)} aşama`}</div>` : ''}
+    ${(r.warnings || []).map(w => `<div class="msg warn">${esc(w)}</div>`).join('')}
+    ${r.error ? `<div class="msg err">${esc(r.error)}</div>` : ''}
+    <div id="chart" ${st.length ? '' : 'hidden'}></div>
+    ${st.length ? `<div class="tbl" style="margin-top:10px"><table><thead><tr><th>Seviye</th><th>İstek/s</th><th>Çıkış tok/s</th><th>TTFT p50</th><th>TTFT p95</th><th>TPOT p50</th><th>TPOT p95</th><th>E2E p95</th><th>Goodput %</th><th>Hata</th><th>KV max %</th><th>GPU %</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="hint">Süreler ms. Kırmızı: SLO aşıldı (TTFT ${fmt(slo.ttft_ms)} ms, TPOT ${fmt(slo.tpot_ms)} ms).</div>` : ''}`;
+  const sb = $('stop');
+  if (sb) sb.onclick = async () => { sb.disabled = true; try { await api(`/api/runs/${encodeURIComponent(r.id)}/stop`, {method:'POST'}); } catch(e){ alert(e.message); } loadRun(r.id); };
+  drawChart();
+}
+function drawChart(){
+  const el = $('chart'), st = lastRun && lastRun.stages;
+  if (!el || !st || !st.length || !window.Plotly) return;
+  const fg = cssv('--fg'), grid = cssv('--grid'), c1 = cssv('--accent'), c2 = cssv('--warn');
+  const x = st.map(s => s.level);
+  const ax = extra => Object.assign({gridcolor: grid, zerolinecolor: grid, linecolor: grid, tickfont: {color: fg}}, extra);
+  // two stacked panels sharing x (no dual axis)
+  Plotly.react(el, [
+    {x, y: st.map(s => s.out_tok_per_s), type: 'scatter', mode: 'lines+markers', name: 'Çıkış tok/s', line: {color: c1, width: 2}, marker: {size: 8}},
+    {x, y: st.map(s => s.ttft && s.ttft.p95), type: 'scatter', mode: 'lines+markers', name: 'TTFT p95 (ms)', xaxis: 'x2', yaxis: 'y2', line: {color: c2, width: 2}, marker: {size: 8}}
+  ], {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: {color: fg, size: 12}, height: 360,
+    margin: {l: 60, r: 16, t: 10, b: 50}, legend: {orientation: 'h', y: 1.08},     xaxis: ax({type: 'category', anchor: 'y', showticklabels: false}), xaxis2: ax({title: 'Seviye', type: 'category', anchor: 'y2', matches: 'x'}),
+    yaxis: ax({title: 'tok/s', rangemode: 'tozero', domain: [0.56, 1]}), yaxis2: ax({title: 'TTFT p95 ms', rangemode: 'tozero', domain: [0, 0.44]}),
+    shapes: [{type: 'line', xref: 'x2 domain', x0: 0, x1: 1, yref: 'y2', y0: lastRun.config.slo.ttft_ms, y1: lastRun.config.slo.ttft_ms, line: {color: c2, dash: 'dash', width: 1}}]
+  }, {displayModeBar: false, responsive: true});
+}
+
+/* ---- history ---- */
+const sel = new Set();
+function markCur(){ document.querySelectorAll('#hist tr[data-id]').forEach(tr => tr.classList.toggle('cur', tr.dataset.id === curId)); }
+function syncCmp(){ $('cmp').disabled = sel.size < 2; }
+async function loadHistory(){
+  let list;
+  try { list = await api('/api/runs'); } catch(e){ return list; }
+  [...sel].forEach(id => { if (!list.some(r => r.id === id)) sel.delete(id); });
+  $('hist').innerHTML = list.length ? `<thead><tr><th></th><th>Ad / model</th><th class="l">Tarih</th><th class="l">Durum</th><th>Tepe tok/s</th><th>En iyi TTFT p50</th><th></th></tr></thead><tbody>` +
+    list.map(r => `<tr data-id="${esc(r.id)}"><td><input type="checkbox" class="sel" ${sel.has(r.id) ? 'checked' : ''}></td>
+      <td class="l"><b>${esc(r.name || r.id)}</b><br><span class="muted">${esc(r.model || '')}</span></td><td class="l">${esc(dt(r.created))}</td>
+      <td class="l">${badge(r.status)} <span class="muted">${esc(r.stages_done ?? 0)}/${esc(r.stages_total ?? '?')}</span></td>
+      <td>${fmt(r.peak_out_tok_per_s, 1)}</td><td>${fmt(r.best_ttft_p50_ms)} ms</td>
+      <td><a href="/api/runs/${encodeURIComponent(r.id)}/report" target="_blank" rel="noopener">Rapor</a>
+        <button type="button" class="icon del" title="Sil" aria-label="Sil">🗑</button></td></tr>`).join('') + '</tbody>'
+    : '<tbody><tr><td class="l muted">Henüz test yok.</td></tr></tbody>';
+  syncCmp(); markCur();
+  return list;
+}
+$('hist').addEventListener('click', async e => {
+  const tr = e.target.closest('tr[data-id]'); if (!tr) return;
+  const id = tr.dataset.id;
+  if (e.target.classList.contains('sel')) { e.target.checked ? sel.add(id) : sel.delete(id); syncCmp(); }
+  else if (e.target.closest('.del')) {
+    if (!confirm('Bu test silinsin mi?')) return;
+    try { await api('/api/runs/' + encodeURIComponent(id), {method:'DELETE'}); } catch(err){ alert(err.message); }
+    if (id === curId) { clearTimeout(timer); curId = lastRun = null; $('activeBody').className = 'muted'; $('activeBody').textContent = 'Çalışan test yok.'; }
+    sel.delete(id); loadHistory();
+  }
+  else if (!e.target.closest('a')) loadRun(id);
+});
+$('cmp').onclick = () => window.open('/api/compare?ids=' + [...sel].map(encodeURIComponent).join(','), '_blank', 'noopener');
+
+/* ---- start ---- */
+$('form').onsubmit = async e => {
+  e.preventDefault();
+  const m = $('formMsg'), b = $('start'); show(m, '');
+  let cfg; try { cfg = config(); } catch(err){ return show(m, err.message); }
+  b.disabled = true;
+  try {
+    const r = await api('/api/runs', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)});
+    saveForm(); await loadHistory(); loadRun(r.id);
+  } catch(err){ show(m, err.message); }
+  b.disabled = false;
+};
+
+/* ---- init ---- */
+restoreForm(); vis();
+applyTheme(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
+loadDatasets();
+loadHistory().then(list => { const r = list && list.find(x => x.status === 'running'); if (r) loadRun(r.id); });
+setInterval(loadHistory, 10000);
+</script>
+</body>
+</html>

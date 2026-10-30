@@ -1,0 +1,13 @@
+# Only the oauth-proxy port is reachable; plain 8080 (no auth) stays pod-local. Kubelet probes are not affected.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm-bench-only-proxy
+spec:
+  podSelector:
+    matchLabels:
+      app: llm-bench
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: 8443

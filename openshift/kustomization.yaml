@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Namespace is created by hand: oc new-project llm-bench
+namespace: llm-bench
+resources:
+  - serviceaccount.yaml
+  - rbac.yaml
+  - pvc.yaml
+  - build.yaml
+  - deployment.yaml
+  - service.yaml
+  - route.yaml
+  - networkpolicy.yaml

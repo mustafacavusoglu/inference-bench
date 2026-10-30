@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-bench
+  annotations:
+    # roll out automatically when a new build lands in llm-bench:latest
+    image.openshift.io/triggers: '[{"from":{"kind":"ImageStreamTag","name":"llm-bench:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"app\")].image"}]'
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # RWO PVC + one benchmark at a time
+  selector:
+    matchLabels:
+      app: llm-bench
+  template:
+    metadata:
+      labels:
+        app: llm-bench
+    spec:
+      serviceAccountName: llm-bench
+      containers:
+        - name: app
+          image: image-registry.openshift-image-registry.svc:5000/llm-bench/llm-bench:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - {name: DATA_DIR, value: /data}
+            - {name: SHAREGPT_PATH, value: /app/data/sharegpt.jsonl}
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: "2", memory: 1Gi}
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8080}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+        - name: oauth-proxy
+          # quay.io/openshift/origin-oauth-proxy:4.16 works for OKD/crc
+          image: registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:latest
+          args:
+            - --provider=openshift
+            - --https-address=:8443
+            - --http-address=
+            - --upstream=http://localhost:8080
+            - --openshift-service-account=llm-bench
+            # only users who can get pods in this namespace
+            - --openshift-sar={"namespace":"llm-bench","resource":"pods","verb":"get"}
+            - --tls-cert=/etc/tls/private/tls.crt
+            - --tls-key=/etc/tls/private/tls.key
+            - --cookie-secret-file=/etc/proxy/secrets/session_secret
+            - --skip-auth-regex=^/healthz$
+          ports:
+            - containerPort: 8443
+              name: https
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 128Mi}
+          volumeMounts:
+            - {name: proxy-tls, mountPath: /etc/tls/private}
+            - {name: proxy-cookie, mountPath: /etc/proxy/secrets}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: llm-bench-data}
+        - name: proxy-tls
+          secret: {secretName: llm-bench-tls}
+        - name: proxy-cookie
+          secret: {secretName: llm-bench-cookie}   # created by hand, see README
